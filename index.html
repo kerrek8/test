@@ -9,6 +9,10 @@
     textarea { box-sizing: border-box; display: block; width: 100%; margin: .5rem 0; padding: .5rem; font: inherit; }
     button { padding: .4rem .8rem; font: inherit; }
     pre { white-space: pre-wrap; }
+    #status:not(:empty) { padding: .5rem .75rem; border-radius: 4px; margin: 1rem 0; }
+    .status-ready { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+    .status-manual { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+    .status-error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
   </style>
 </head>
 <body>
@@ -18,18 +22,74 @@
     <textarea id="message" rows="4"></textarea>
     <button type="submit">Разобрать заявку</button>
   </form>
-  <pre id="result" aria-live="polite"></pre>
+  <p id="status" aria-live="polite"></p>
+  <div id="output">
+    <p id="topic-container" hidden><strong>Тема:</strong> <span id="topic"></span></p>
+    <p id="draft-container" hidden><strong>Черновик ответа:</strong> <span id="draft"></span></p>
+  </div>
   <script type="module">
     const form = document.querySelector("form");
-    const result = document.querySelector("#result");
+    const messageInput = document.querySelector("#message");
+    const statusEl = document.querySelector("#status");
+    const topicEl = document.querySelector("#topic");
+    const draftEl = document.querySelector("#draft");
+    const topicContainer = document.querySelector("#topic-container");
+    const draftContainer = document.querySelector("#draft-container");
+
+    function clearDraft() {
+      topicEl.textContent = "";
+      draftEl.textContent = "";
+      topicContainer.hidden = true;
+      draftContainer.hidden = true;
+    }
+
+    function setStatus(text, type) {
+      statusEl.className = type ? `status-${type}` : "";
+      statusEl.textContent = text;
+    }
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const reply = await fetch("/api/triage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: document.querySelector("#message").value }),
-      });
-      result.textContent = JSON.stringify(await reply.json(), null, 2);
+      setStatus("", "");
+
+      const text = messageInput.value;
+      if (!text || !text.trim()) {
+        clearDraft();
+        setStatus("Пожалуйста, введите текст заявки.", "error");
+        return;
+      }
+
+      try {
+        const reply = await fetch("/api/triage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        const data = await reply.json();
+
+        if (!reply.ok || data.status === "invalid_input") {
+          clearDraft();
+          setStatus("Некорректный ввод: текст заявки не может быть пустым.", "error");
+          return;
+        }
+
+        if (data.status === "manual_review") {
+          clearDraft();
+          setStatus("Заявка требует ручного разбора: автоматический ответ не сформирован.", "manual");
+          return;
+        }
+
+        if (data.status === "ready") {
+          topicEl.textContent = data.topic;
+          draftEl.textContent = data.draft;
+          topicContainer.hidden = false;
+          draftContainer.hidden = false;
+          setStatus("Заявка успешно разобрана.", "ready");
+        }
+      } catch {
+        clearDraft();
+        setStatus("Ошибка связи с сервером.", "error");
+      }
     });
   </script>
 </body>
